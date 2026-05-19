@@ -291,6 +291,10 @@ The test asserts:
 - `scrot` of `$DISPLAY` shows pixel-histogram coverage of the same
   colours
 
+The terminal side is captured through `script` so Chromium/Carbonyl sees a real
+PTY. Redirecting stdout to a regular file can produce a false failure because
+the terminal renderer changes behavior when no tty is present.
+
 If either side fails, the pipeline blocks before the runtime is rolled
 out to dependent stages.
 

@@ -1,6 +1,7 @@
 # CI/CD Plan — Gitea Actions v3 + Builder Container
 
-**Status**: Draft for review. Individual work items filed as Gitea issues for approval.
+**Status**: Implemented. Green as of `build-runtime.yml` run 133 and
+`mirror.yml` run 134 on `c751224`.
 
 ## Why this doc exists
 
@@ -8,16 +9,16 @@ Carbonyl's build servers are **shared workstations**. Installing Rust toolchains
 
 Secondary constraint: the Chromium build is heavy (~150GB source, ~40GB build artifacts, multi-hour rebuilds). It can only run on **titan** (our largest in-house CPU host) and cannot be moved to a generic ephemeral runner.
 
-## Current state (baseline)
+## Current state
 
 | Piece | Location | Status |
 |-------|----------|--------|
-| Gitea workflows | `.gitea/workflows/check.yml`, `.gitea/workflows/build-runtime.yml` | Exist, run on `titan` runner, use **host-installed** toolchain (Rust, ninja, clang). **Policy violation** — pollutes the shared host. |
-| Builder Dockerfile | `build/Dockerfile.builder` | Exists, targets Ubuntu 22.04 + depot_tools + Rust. **Not published**, not currently consumed by any CI step. |
-| Builder image publish | Buried as a `build-builder` job at the tail of `build-runtime.yml` | Couples publishing to runtime-build cadence. Publishes `latest` + `sha-<short>` to `git.integrolabs.net/roctinam/carbonyl-builder`. |
-| Runtime packaging | `scripts/build.sh`, `runtime-push.sh`, `runtime-pull.sh`, `runtime-hash.sh` | Well-factored; CI uses these. |
-| Release publishing | Manual via `scripts/release.sh` + `npm version` | Works but not wired to a workflow yet. `v0.2.0-alpha.1` published; `v0.2.0-alpha.2` tagged but not released. |
-| GitHub mirror | `github` remote exists; no sync workflow | Manual push today. |
+| Gitea workflows | `.gitea/workflows/check.yml`, `.gitea/workflows/build-runtime.yml`, `.gitea/workflows/release.yml` | Run on `titan` using the pinned builder image; host toolchains are not required. |
+| Builder Dockerfile | `build/Dockerfile.builder` | Published by `build-builder.yml`; consumers pin `.gitea/builder-image-pin`. |
+| Builder image publish | `.gitea/workflows/build-builder.yml` | Decoupled from runtime builds. Publishes `latest` + `sha-<short>` to `git.integrolabs.net/roctinam/carbonyl-builder`. |
+| Runtime packaging | `scripts/build.sh`, `runtime-push.sh`, `runtime-pull.sh`, `runtime-hash.sh` | `build-runtime.yml` publishes both `headless` and `x11` amd64 runtimes on relevant source changes and manual dispatch. |
+| Release publishing | `.gitea/workflows/release.yml` | Tag-driven `v*` release workflow; never rebuilds Chromium, only repackages already-published runtime releases for the tag's runtime hash. |
+| GitHub mirror | `.gitea/workflows/mirror.yml` | One-way origin → GitHub sync for `main` and `v*` tags. Uses explicit remote SHA force-with-lease for branch updates. |
 | Runner labels in use | `titan` | Single runner. No label segmentation for light vs heavy jobs. |
 
 ## Target architecture
@@ -60,15 +61,15 @@ Secondary constraint: the Chromium build is heavy (~150GB source, ~40GB build ar
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-## Planned workflows (target state)
+## Workflows
 
 | Workflow | Trigger | Runtime | Purpose |
 |----------|---------|---------|---------|
 | `build-builder.yml` | Dockerfile.builder change; manual | titan, bare host (Docker only) | Build and push the builder image. Decoupled from runtime builds. |
-| `check.yml` (refactored) | push, PR | titan, inside builder container | cargo fmt + clippy + lib test. Fast feedback on Rust changes. |
-| `build-runtime.yml` (refactored) | patch changes; manual | titan, inside builder container (with bind-mounted chromium src) | Full Chromium build, runtime hash, tarball upload to Gitea runtime release. |
-| `release.yml` (new) | `v*` tag push; manual | titan, inside builder container | On tag, pull matching runtime tarball (by hash), package, create Gitea + GitHub releases with notes. |
-| `mirror.yml` (new) | push to main, `v*` tag push | titan, bare host (git only) | Sync origin → github remote. Tags + main. |
+| `check.yml` | push, PR | titan, inside builder container | cargo fmt + clippy + lib test. Fast feedback on Rust changes. |
+| `build-runtime.yml` | runtime-affecting source changes; manual | titan, inside builder container (with bind-mounted Chromium src) | Full Chromium build, runtime hash, tarball upload to Gitea runtime release. Fans out over headless and x11. |
+| `release.yml` | `v*` tag push; manual | titan, inside builder container | On tag, pull matching runtime tarballs by hash, package, create Gitea + GitHub releases with notes. |
+| `mirror.yml` | push to main, `v*` tag push | titan, bare host (git only) | Sync origin → github remote. Tags + main. |
 
 ## Key design decisions
 
@@ -77,6 +78,13 @@ Secondary constraint: the Chromium build is heavy (~150GB source, ~40GB build ar
 - **Runtime tarballs are keyed by `runtime-<hash>`**, computed from `.gclient` + patches + bridge files (see `scripts/runtime-hash.sh`). Consumer-side `build-local.sh` pulls the matching one. This already works; CI just needs to publish on the right trigger.
 - **Release artifacts are source-level tags (`v0.x.y`) separate from runtime tags (`runtime-<hash>`).** Source tag points at code + docs; runtime tag points at pre-built binaries. One `v0.x.y` release may reference multiple `runtime-<hash>` assets if re-built for different architectures.
 - **GitHub mirror is one-way** (origin → github, never the reverse). Tag pushes replicate. This matches the "push to origin first" convention in top-level `CLAUDE.md`.
+- **Host workspace sync is ownership-normalized before rsync.** `build-runtime.yml`
+  fixes stale root-owned files under `/srv/carbonyl/` before copying the
+  workspace checkout and uses rsync without owner/group preservation. The heavy
+  Chromium checkout and depot_tools tree are excluded from this normalization.
+- **X11 runtime validation checks two outputs.** `scripts/test-x-mirror.sh`
+  captures Carbonyl through a PTY for terminal ANSI output and screenshots the X
+  framebuffer; both must pass before publishing the x11 runtime.
 
 ## Approval gates (per policy)
 

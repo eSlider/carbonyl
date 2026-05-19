@@ -105,7 +105,7 @@ The upgrade path was: M111 → M120 → M132 → M135 → M140 → M147 → M148
 
 8. **Upload new runtime** to the release page (makes `build-local.sh` fast for others):
 
-   Runtimes are distributed as release assets on `jmagly/carbonyl`. Each release is
+   Runtimes are distributed as release assets on `roctinam/carbonyl`. Each release is
    tagged `runtime-<hash>` where the hash is computed from the Chromium version, patches,
    and bridge files. Run for each target platform:
 
@@ -121,7 +121,7 @@ The upgrade path was: M111 → M120 → M132 → M135 → M140 → M147 → M148
    GITEA_TOKEN=<token> bash scripts/runtime-push.sh arm64
    ```
 
-   The upload token must have release-write scope on `jmagly/carbonyl`.
+   The upload token must have release-write scope on `roctinam/carbonyl`.
    If the tarball exceeds a server-side upload limit, adjust the limit in the
    hosting platform's configuration.
 
@@ -138,14 +138,12 @@ The `scripts/patches.sh` script uses hardcoded upstream base commits (current: M
 When updating Chromium, update all three to the new version's base commits
 before running `patches.sh apply`.
 
-### Notes on current patch set (M147)
+### Notes on current patch set (M148)
 
-- **Total patches**: 24 (unchanged). All rebased cleanly on M147 with 11
-  conflicts resolved during `git am` and 20 iterative build fixes for M147
-  API drift. No new patches were needed — the drift was entirely API-level,
-  not structural.
+- **Total patches**: 26. The M148 rebase keeps the existing structure but
+  regenerates the Chromium patch stack against `148.0.7778.167`.
 
-- **M147-specific changes baked into existing patches**:
+- **Rebase changes baked into existing patches**:
   - `font.h`: dead `Font::DrawText(TextRun)` overloads removed —
     `CachingWordShaper` and `ShapeResultBuffer` were removed upstream.
     The `TextFragmentPaintInfo` path (with the b64 text-capture bypass)
@@ -156,7 +154,7 @@ before running `patches.sh apply`.
   - `software_output_device_proxy.cc`: `ResourceSizes::MaybeSizeInBytes`
     replaced with `SinglePlaneFormat::kRGBA_8888.MaybeEstimatedSizeInBytes()`
   - `browser_interface_binders.cc`: `BinderMap::Add` signature changed;
-    use `BindRenderFrameHostImpl<>` template (M147)
+    use `BindRenderFrameHostImpl<>` template
   - `headless/BUILD.gn`: phantom `//carbonyl/src/browser:carbonyl` dep
     removed (target never existed — worked by accident in older gn)
   - `headless_browser_impl.cc`: added `content/public/browser/navigation_controller.h`;
@@ -164,17 +162,28 @@ before running `patches.sh apply`.
   - `headless_screen.cc`: removed duplicate `~HeadlessScreen() = default`
   - `headless_web_contents_impl.h`: `using content::WebContentsObserver::OnVisibilityChanged`
   - `paint_artifact_compositor.cc`: removed orphan
-    `DumpWithDifferingPaintPropertiesIncluded` definition
+    `DumpWithDifferingPaintPropertiesIncluded` definition. The M148 tree also
+    removed the upstream debug dump helper block (`DescribePaintPropertyNode`
+    and `DumpWithDifferingPaintPropertiesIncluded` callers), so the regenerated
+    patch now matches the final upstream shape.
   - `text_decoration_painter.cc`: `(void)skip_ink` to suppress unused-var
+  - `cc/trees/layer_tree_host.cc`: `PaintContent` keeps the upstream M148
+    `bool result` flow, calls `StartTerminalRender()`, and returns `result`.
 
-- **M147-specific changes in carbonyl source**:
+- **Rebase changes in carbonyl source**:
   - `src/browser/args.gn`: `use_dbus = true` (wayland ozone requirement)
   - `src/browser/renderer.cc`: static `unique_ptr` → leaked raw pointer
-    (M147 clang enforces `-Wexit-time-destructors`)
+    (M147+ clang enforces `-Wexit-time-destructors`)
   - `src/blink/text_capture.cc`:
     - Skia `drawPath(path, paint, bool=false)` → `drawPath(path, paint)`
     - Skia `getRelativeTransform` returns `SkM44` — use `.asM33()`
     - Static `RendererService` → leaked pointer
+
+- **CI verification**: `build-runtime.yml` is green for both `headless` and
+  `x11` amd64 variants on run 133 at `c751224`, and `mirror.yml` is green on
+  run 134. The x11 smoke test requires a real PTY via `script` for terminal
+  capture while also checking the X framebuffer; both outputs passed before the
+  runtime was published.
 
 - **Patch 22** (`fix-m135-remove-stale-blink-target-dep`): removes a stale
   `:blink` GN dep from `blink/renderer/platform/BUILD.gn` (artifact of patch
@@ -185,6 +194,9 @@ before running `patches.sh apply`.
 - **Patch 24** (`fix-chromium-Path-A-allow-carbonyl-src-blink-to-depend`):
   grants `//carbonyl/src/blink:text_capture` visibility into blink GN targets,
   enabling the Path A structural fix that restores `--carbonyl-b64-text`.
+- **Patch 25/26**: carry the M148 follow-up adjustments for compositor/debug
+  dump drift and terminal-render paint flow. Keep these separate until the next
+  audit decides whether they should be folded into their originating patches.
 
 - **Patch 03** (`Setup-shared-software-rendering-surface`): removes `[EnableIf=is_win]`
   guard from `CreateLayeredWindowUpdater` in `display_private.mojom`, making it
@@ -250,7 +262,7 @@ milestone, the `text_capture` source set may need to be relocated — but the
 pattern (dedicated blink TU for non-blink consumers) is the correct long-term
 approach.
 
-### GN args notes (M147)
+### GN args notes (M148)
 
 Several feature flags are intentionally **left at their platform defaults**
 (typically `true` on Linux) instead of being explicitly set to `false`:
@@ -263,7 +275,7 @@ Several feature flags are intentionally **left at their platform defaults**
 - `enable_webui_certificate_viewer`
 
 Setting any of these to `false` in `args.gn` triggers file-level `assert()`
-failures in `chrome/test/BUILD.gn` during `gn gen`, because M135's
+failures in `chrome/test/BUILD.gn` during `gn gen`, because M135+'s
 `gn_all` group transitively pulls those service BUILD.gn files into the
 evaluation graph even though headless_shell never compiles their targets.
 The features are not built into headless_shell either way (it has its own

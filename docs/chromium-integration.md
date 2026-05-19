@@ -152,7 +152,7 @@ The anchor format is GitHub-flavored: lowercase, spaces → hyphens, em-dashes �
 
 ### Display DPI and text (0006–0008)
 
-*Audit issue #40. Audited 2026-04-16 against `chromium/src @ 147.0.7727.85-639`.*
+*Audit issue #40. Audited 2026-04-16 against `chromium/src @ 147.0.7727.85-639`; current maintained baseline is M148 (`148.0.7778.167`).*
 
 ### Patch 0006 — Setup display DPI
 
@@ -247,7 +247,7 @@ After this patch, the resolved style is effectively uniform across the document:
 
 ### Version-compat fixes (0015–0024)
 
-*Audit tracked in #42.* Placeholder — not yet audited. See [MAINTENANCE.md](../MAINTENANCE.md#chromium-version) for the rebase history (M111 → M120 → M132 → M135 → M140 → M147) that produced these fixes; several may now be fold-in candidates.
+*Audit tracked in #42.* Placeholder — not yet audited. See [MAINTENANCE.md](../MAINTENANCE.md#chromium-version) for the rebase history (M111 → M120 → M132 → M135 → M140 → M147 → M148) that produced these fixes; several may now be fold-in candidates.
 
 ---
 
@@ -363,7 +363,7 @@ Both chains MUST return the same value. If they drift (e.g. a future patch intro
 *Ozone / display*:
 - `ozone_platform = "headless"` with `ozone_platform_x11 = false` — Carbonyl has no window server, so no X11
 - `use_qt/gio/gtk/cups/xkbcommon = false` — prune desktop-env deps
-- `use_dbus = true` — **required as of M147**. Wayland ozone unconditionally depends on `clipboard_util_linux` which requires dbus; setting `use_dbus = false` breaks the build even though Carbonyl doesn't use dbus. Document whenever this constraint relaxes upstream.
+- `use_dbus = true` — **required since M147 and still required on M148**. Wayland ozone unconditionally depends on `clipboard_util_linux` which requires dbus; setting `use_dbus = false` breaks the build even though Carbonyl doesn't use dbus. Document whenever this constraint relaxes upstream.
 
 *Feature flags*:
 - `enable_nacl = false`, `enable_media_remoting = false`, `enable_system_notifications = false` — unused, safe to disable
@@ -375,7 +375,7 @@ Both chains MUST return the same value. If they drift (e.g. a future patch intro
 - `headless_enable_commands = false` aligns with 0002 (Carbonyl service) replacing the built-in commands path
 
 **Rebase hotspots**:
-- GN flag renames: `use_dbus` was forceable before M147; watch for similar reversals
+- GN flag renames: `use_dbus` was forceable before M147; it remains load-bearing on M148. Watch for similar reversals.
 - Skia's component-build export list has changed multiple times (see 0014's rebase fixes in patches 0019, 0021)
 - Ozone platform names and default sets drift across milestones
 
@@ -395,7 +395,7 @@ Both chains MUST return the same value. If they drift (e.g. a future patch intro
 
 **Note on the Carbonyl-owned `chromium/src/carbonyl/src/viz/carbonyl_software_output_device.{h,cc}`**: those files exist in the tree but are **dead code**. No build target depends on `//carbonyl/src/viz:viz`, and no source in `components/viz/` or `content/` references `CarbonylSoftwareOutputDevice`. The file header claims it's the active implementation following a post-M132 extraction, but that migration was prepared and not carried through. Left as-is for future rebases but flagged here so subsequent readers don't trust the header comment over `grep`.
 
-**Upstream caller chain** (verified on this tree, `chromium/src` at `147.0.7727.85-639`):
+**Upstream caller chain** (historical audit snapshot, verified on `chromium/src` at `147.0.7727.85-639`):
 1. `components/viz/service/display/direct_renderer.cc:351-352` populates `reshape_params.size` (upstream calls this "physical pixels") and `reshape_params.device_scale_factor`.
 2. `components/viz/service/display/direct_renderer.cc:364` calls `Reshape(reshape_params)`.
 3. `components/viz/service/display_embedder/software_output_surface.cc:55` calls `software_device()->Resize(params.size, params.device_scale_factor)`.

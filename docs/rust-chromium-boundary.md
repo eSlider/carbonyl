@@ -191,7 +191,8 @@ Realistic rates observed on a 20-core host at `-j 10`:
 - Blink bindings (generated): ~50 .o/min
 - Chromium link: 5-10 min single-threaded at the end
 
-Total tasks at clean M147 build: ~38,877.
+Total tasks at clean M148 build: about 37.6k ninja edges for headless amd64;
+x11 is in the same range.
 
 ---
 

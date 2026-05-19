@@ -48,7 +48,7 @@ Chromium source lives at **`/srv/carbonyl/`** on titan. This path is referenced 
 └── ... (rest of the roctinam/carbonyl repo tree)
 ```
 
-The `chromium/src/` directory is persistent across builds. Each workflow run syncs the non-Chromium files from the workspace checkout into `/srv/carbonyl/` via rsync, preserving the heavy checkout. See `.gitea/workflows/build-runtime.yml` step "Sync workspace → host Chromium checkout".
+The `chromium/src/` directory is persistent across builds. Each workflow run syncs the non-Chromium files from the workspace checkout into `/srv/carbonyl/` via rsync, preserving the heavy checkout. Before rsync, `build-runtime.yml` normalizes ownership of the Carbonyl-owned host files while excluding `chromium/src/` and `chromium/depot_tools/`; the rsync step also avoids preserving owner/group metadata. See `.gitea/workflows/build-runtime.yml` step "Sync workspace → host Chromium checkout".
 
 #### Bootstrap option A — rsync from a host that already has the source (fastest on LAN)
 
@@ -164,6 +164,7 @@ Unsafe to prune:
 | Build runs out of disk | `out/` outputs piled up | `df -h /srv/carbonyl`; prune per above |
 | Docker pull fails with 401 | Registry login expired | Re-run step 5 of bootstrap |
 | `docker login` fails | `BUILD_REPO_TOKEN` expired | Rotate in Gitea secrets; re-run runner steps |
+| `rsync` fails with `mkstemp ... Permission denied` under `/srv/carbonyl/chromium/patches` | Stale host files are owned by a previous container/root user | Re-run with the current workflow; it normalizes host ownership before rsync. If fixing manually, chown only Carbonyl-owned files, not `chromium/src/` or `chromium/depot_tools/`. |
 | Chromium source shows local modifications (`git status` non-empty) | Patches not cleaned between builds | `cd /srv/carbonyl/chromium/src && git reset --hard && git clean -xfd`; re-apply via `scripts/patches.sh apply` |
 | Slow build (not half-cores respected) | `NINJA_JOBS` override missing or wrong | Set `ninja_jobs` workflow_dispatch input explicitly |
 
