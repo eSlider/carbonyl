@@ -9,11 +9,13 @@
 #include <utility>
 #include <vector>
 
+#include "base/compiler_specific.h"
 #include "base/json/json_writer.h"
 #include "base/logging.h"
 #include "base/values.h"
 #include "content/public/browser/browser_accessibility_state.h"
 #include "content/public/browser/browser_context.h"
+#include "content/public/browser/scoped_accessibility_mode.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/accessibility/ax_enum_util.h"
 #include "ui/accessibility/ax_enums.mojom.h"
@@ -33,7 +35,7 @@ const char* AllocateNoTreeError() {
   constexpr const char kErrorJson[] = "{\"error\":\"no_tree\"}";
   const size_t len = sizeof(kErrorJson);  // includes NUL
   char* out = new char[len];
-  std::memcpy(out, kErrorJson, len);
+  UNSAFE_BUFFERS(std::memcpy(out, kErrorJson, len));
   return out;
 }
 
@@ -43,7 +45,7 @@ const char* AllocateNoTreeError() {
 const char* AllocateCString(const std::string& s) {
   const size_t len = s.size() + 1;
   char* out = new char[len];
-  std::memcpy(out, s.c_str(), len);
+  UNSAFE_BUFFERS(std::memcpy(out, s.c_str(), len));
   return out;
 }
 
@@ -66,9 +68,10 @@ NodeIndex BuildIndex(const ui::AXTreeUpdate& update) {
 // pruned — their non-ignored descendants are NOT lifted up (mirrors
 // chromium's own tree-pruning convention; an automation client that
 // needs the full structure can disable pruning via a future flag).
-base::Value::Dict SerializeNode(const ui::AXNodeData& node,
-                                const NodeIndex& index) {
-  base::Value::Dict out;
+base::DictValue SerializeNode(const ui::AXNodeData& node,
+                              const NodeIndex& index,
+                              int32_t focused_id) {
+  base::DictValue out;
 
   out.Set("role", ui::ToString(node.role));
 
@@ -91,13 +94,11 @@ base::Value::Dict SerializeNode(const ui::AXNodeData& node,
     out.Set("description", description);
   }
 
-  // Boolean state flags. These map directly from AXNodeData state bits
-  // to the JSON booleans the issue specifies. Both fields are always
+  // Boolean fields. Focus comes from AXTreeData::focus_id; disabled comes
+  // from AXNodeData restriction state. Both fields are always
   // emitted (true OR false) so downstream automation can rely on their
   // presence without a key-existence check.
-  out.Set("focused",
-          node.HasState(ax::mojom::State::kFocusable) &&
-              node.GetBoolAttribute(ax::mojom::BoolAttribute::kFocused));
+  out.Set("focused", node.id == focused_id);
   out.Set("disabled", node.GetRestriction() ==
                           ax::mojom::Restriction::kDisabled);
 
@@ -108,7 +109,7 @@ base::Value::Dict SerializeNode(const ui::AXNodeData& node,
   // space. Viewport-relative is the natural output — no scroll-offset
   // adjustment is applied here (per cycle #1 lock).
   const gfx::RectF& rect = node.relative_bounds.bounds;
-  base::Value::Dict bbox;
+  base::DictValue bbox;
   bbox.Set("x", rect.x());
   bbox.Set("y", rect.y());
   bbox.Set("w", rect.width());
@@ -119,7 +120,7 @@ base::Value::Dict SerializeNode(const ui::AXNodeData& node,
   // IDs are AXNodeID (also int32_t). Look up each child in the flat
   // index; skip missing IDs defensively (shouldn't happen in a
   // well-formed snapshot, but a renderer bug shouldn't crash carbonyl).
-  base::Value::List children;
+  base::ListValue children;
   for (int32_t child_id : node.child_ids) {
     auto it = index.find(child_id);
     if (it == index.end()) {
@@ -129,7 +130,7 @@ base::Value::Dict SerializeNode(const ui::AXNodeData& node,
     if (child->IsIgnored()) {
       continue;  // Pruned per design.
     }
-    children.Append(SerializeNode(*child, index));
+    children.Append(SerializeNode(*child, index, focused_id));
   }
   out.Set("children", std::move(children));
 
@@ -171,13 +172,14 @@ void AccessibilityHandler::InstallFor(content::WebContents* web_contents) {
   // handlers on the same context, so this also covers the implicit
   // dependency of `DumpTextHandler::Mode::kAccessibility` on AX being
   // on (see #90 unblock note in PR #98).
-  content::BrowserAccessibilityState::GetInstance()
-      ->SetAccessibilityModeForBrowserContext(
-          web_contents->GetBrowserContext(), ui::kAXModeWebContentsOnly);
   LOG(INFO) << "carbonyl::AccessibilityHandler: bound to WebContents, "
             << "AX mode forced to kAXModeWebContentsOnly";
 
   g_instance_ = new AccessibilityHandler(web_contents);
+  g_instance_->scoped_ax_mode_ =
+      content::BrowserAccessibilityState::GetInstance()
+          ->CreateScopedModeForBrowserContext(web_contents->GetBrowserContext(),
+                                              ui::kAXModeWebContentsOnly);
 }
 
 // static
@@ -209,9 +211,11 @@ const char* AccessibilityHandler::GetTreeJSON() {
     return AllocateNoTreeError();
   }
 
-  base::Value::Dict root_dict = SerializeNode(*root_it->second, index);
+  const int32_t focused_id = update.has_tree_data ? update.tree_data.focus_id
+                                                  : ui::kInvalidAXNodeID;
+  base::DictValue root_dict = SerializeNode(*root_it->second, index, focused_id);
   std::string json;
-  if (!base::JSONWriter::Write(base::Value(std::move(root_dict)), &json)) {
+  if (!base::JSONWriter::Write(root_dict, &json)) {
     LOG(ERROR) << "carbonyl::AccessibilityHandler: base::JSONWriter::Write "
                   "failed; returning no_tree sentinel";
     return AllocateNoTreeError();

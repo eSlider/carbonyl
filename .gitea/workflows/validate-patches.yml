@@ -114,7 +114,15 @@ jobs:
             "https://token:${{ github.token }}@git.integrolabs.net/${GITHUB_REPOSITORY}.git" \
             "${GITHUB_WORKSPACE}/.repo-clone"
           cd "${GITHUB_WORKSPACE}/.repo-clone"
-          git checkout "${GITHUB_SHA}"
+          if ! git checkout "${GITHUB_SHA}"; then
+            echo "[checkout] ${GITHUB_SHA} missing from shallow clone; fetching PR refs"
+            git fetch --depth 50 origin "${GITHUB_SHA}" || true
+            if [ -n "${GITHUB_HEAD_REF:-}" ]; then
+              git fetch --depth 50 origin "${GITHUB_HEAD_REF}" || true
+            fi
+            git fetch --depth 50 origin "+refs/pull/*/head:refs/remotes/origin/pr/*" || true
+            git checkout "${GITHUB_SHA}"
+          fi
           echo "[checkout] HEAD at $(git rev-parse HEAD)"
 
       - name: Sync patch files to host carbonyl dir
@@ -143,6 +151,7 @@ jobs:
             -v "${HOST_CARBONYL_DIR}:${HOST_CARBONYL_DIR}" \
             -e CARBONYL_ROOT=${HOST_CARBONYL_DIR} \
             -e CHROMIUM_SRC=${HOST_CHROMIUM_SRC_DIR} \
+            -e GITHUB_RUN_ID=${{ github.run_id }} \
             -w ${HOST_CARBONYL_DIR} \
             "${BUILDER_IMAGE}" \
             bash -c '
@@ -151,13 +160,23 @@ jobs:
               git config --global user.email "validate@carbonyl.local"
               git config --global user.name "Carbonyl Validator"
 
-              WORKTREE="/tmp/carbonyl-validate-worktree-$$"
+              git -C ${CHROMIUM_SRC} worktree prune
+
+              WORKTREE="/tmp/carbonyl-validate-worktree-${GITHUB_RUN_ID:-manual}-${RANDOM}"
+              git -C ${CHROMIUM_SRC} worktree remove --force ${WORKTREE} 2>/dev/null || rm -rf ${WORKTREE}
               trap "git -C ${CHROMIUM_SRC} worktree remove --force ${WORKTREE} 2>/dev/null || rm -rf ${WORKTREE}" EXIT
 
-              # Add a worktree at the current chromium/src HEAD (the pinned
-              # upstream commit, no carbonyl patches yet). git am will apply
-              # the patch stack on top of this fresh tree.
-              git -C ${CHROMIUM_SRC} worktree add --detach ${WORKTREE} HEAD
+              # Add a worktree at the pinned upstream baseline, not at the
+              # mutable host checkout HEAD. build-runtime syncs to this same
+              # SHA before applying the patch stack; the host checkout may be
+              # left at a patched Carbonyl commit from a prior runtime build.
+              TARGET_SHA="$(sed -n "s/^chromium_upstream=\"\([^\"]*\)\".*/\1/p" scripts/patches.sh | head -1)"
+              if [ -z "${TARGET_SHA}" ]; then
+                echo "[validate] ERROR: could not resolve chromium_upstream from scripts/patches.sh" >&2
+                exit 1
+              fi
+              git -C ${CHROMIUM_SRC} cat-file -e "${TARGET_SHA}^{commit}"
+              git -C ${CHROMIUM_SRC} worktree add --detach ${WORKTREE} "${TARGET_SHA}"
 
               cd ${WORKTREE}
               PATCH_DIR="${CARBONYL_ROOT}/chromium/patches/chromium"

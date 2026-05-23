@@ -38,6 +38,7 @@
 #ifndef CARBONYL_SRC_BROWSER_ACCESSIBILITY_HANDLER_H_
 #define CARBONYL_SRC_BROWSER_ACCESSIBILITY_HANDLER_H_
 
+#include <memory>
 #include <string>
 
 #include "base/memory/raw_ptr.h"
@@ -45,6 +46,7 @@
 #include "content/public/browser/web_contents_observer.h"
 
 namespace content {
+class ScopedAccessibilityMode;
 class WebContents;
 }
 
@@ -84,6 +86,10 @@ class CARBONYL_BRIDGE_EXPORT AccessibilityHandler
 
   // content::WebContentsObserver:
   void WebContentsDestroyed() override;
+
+  // Keeps AX mode enabled for the observed WebContents for the lifetime of
+  // the handler. Chromium M147 exposes AX mode through scoped mode objects.
+  std::unique_ptr<content::ScopedAccessibilityMode> scoped_ax_mode_;
 
   // Singleton storage. nullptr until `InstallFor` is called; set back to
   // nullptr (and self-deleted) when the observed WebContents is torn
