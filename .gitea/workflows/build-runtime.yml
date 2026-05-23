@@ -125,11 +125,23 @@ jobs:
           LOCK="/tmp/carbonyl-chromium-src.lock-${{ github.event.inputs.arch || 'amd64' }}"
           BUILDER_IMG="git.integrolabs.net/roctinam/carbonyl-builder"
           MY_HOLDER="${{ matrix.ozone }} run-${{ github.run_id }}"
+          THIS_RUN="run-${{ github.run_id }}"
           start=$(date +%s)
           while ! mkdir "$LOCK" 2>/dev/null; do
             held_by=$(cat "$LOCK/holder" 2>/dev/null || echo '?')
             elapsed=$(( $(date +%s) - start ))
             lock_age=$(( $(date +%s) - $(stat -c %Y "$LOCK" 2>/dev/null || date +%s) ))
+
+            # Matrix siblings in this same workflow run legitimately wait on
+            # each other. Never stale-reclaim a same-run lock; the holder's
+            # always-on release step owns that transition.
+            case "$held_by" in
+              *" $THIS_RUN")
+                echo "[lock] waiting on $LOCK (held by same-run '$held_by'); waited ${elapsed}s..."
+                sleep 30
+                continue
+                ;;
+            esac
 
             # Stale-lock detection: if the lock is older than 10 minutes
             # AND no live state on the host references it, the holder
