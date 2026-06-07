@@ -36,21 +36,33 @@ permissions:
   actions: write
 
 jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        run: |
+          BOTH='{"include":[{"ozone":"headless","asset_suffix":"x86_64-unknown-linux-gnu","tag_suffix":""},{"ozone":"x11","asset_suffix":"x11-x86_64-unknown-linux-gnu","tag_suffix":"-x11"}]}'
+          HEADLESS='{"include":[{"ozone":"headless","asset_suffix":"x86_64-unknown-linux-gnu","tag_suffix":""}]}'
+          X11='{"include":[{"ozone":"x11","asset_suffix":"x11-x86_64-unknown-linux-gnu","tag_suffix":"-x11"}]}'
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.ozone }}" != "both" ]; then
+            case "${{ github.event.inputs.ozone }}" in
+              headless) echo "matrix=${HEADLESS}" >> "$GITHUB_OUTPUT" ;;
+              x11) echo "matrix=${X11}" >> "$GITHUB_OUTPUT" ;;
+              *) echo "ERROR: unknown ozone '${{ github.event.inputs.ozone }}'" >&2; exit 1 ;;
+            esac
+          else
+            echo "matrix=${BOTH}" >> "$GITHUB_OUTPUT"
+          fi
+
   docker:
     name: Build ${{ matrix.ozone }}
+    needs: resolve
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix:
-        ozone: [headless, x11]
-        include:
-          - ozone: headless
-            asset_suffix: x86_64-unknown-linux-gnu
-            tag_suffix: ''
-          - ozone: x11
-            asset_suffix: x11-x86_64-unknown-linux-gnu
-            tag_suffix: '-x11'
-    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.ozone == 'both' || github.event.inputs.ozone == matrix.ozone }}
+      matrix: ${{ fromJSON(needs.resolve.outputs.matrix) }}
 
     steps:
       - name: Checkout
